@@ -1,5 +1,3 @@
-# data_prep.py
-
 import os
 import json
 import numpy as np
@@ -49,21 +47,27 @@ def map_survival_status(val):
 # FEATURE SELECTION
 # -------------------
 def choose_features(df, drop_columns=None, keep_columns=None):
-    """Drop obvious IDs and select usable features."""
-    # Default columns to drop (all present in your Excel sheet, spelling matches)
+    """Drop leakage & ID columns, keep clinically relevant features."""
     if drop_columns is None:
         drop_columns = [
+            # Identifiers
             'Study ID', 'Patient ID', 'Sample ID', 'Sample Type',
-            'Oncotree Code', "Patient's Vital Status"
+            'Oncotree Code',
+
+            # Explicit survival-related (leakage!)
+            'Overall Survival (Months)',
+            'Overall Survival Status',
+            "Patient's Vital Status",
+            'Overall Survival Status_bin'
         ]
-    # Remove columns that are not in the DataFrame (avoids KeyError)
+
+    # Ensure only valid cols dropped
     drop_columns = [c for c in drop_columns if c in df.columns]
 
-    # If keep_columns is specified, use only those columns
     if keep_columns is not None:
         keep_columns = [c for c in keep_columns if c in df.columns]
         return df[keep_columns].copy()
-    # Otherwise, drop the specified columns
+
     return df.drop(columns=drop_columns, errors='ignore').copy()
 
 
