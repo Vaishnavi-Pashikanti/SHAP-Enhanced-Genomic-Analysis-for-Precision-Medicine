@@ -1,0 +1,13 @@
+{
+  "pipeline": "models\\rf_reg_pipeline.joblib",
+  "model": "models\\rf_reg_model.joblib",
+  "preprocessor": "models\\preprocessor.joblib",
+  "target": "Overall Survival (Months)",
+  "metrics": {
+    "mae": 13.705277915702682,
+    "rmse": 26.233348210409822,
+    "r2": 0.8793686916119345
+  },
+  "n_train": 1584,
+  "n_test": 397
+}

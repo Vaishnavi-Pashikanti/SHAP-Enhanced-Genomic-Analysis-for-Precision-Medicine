@@ -5,6 +5,7 @@ import shap
 import numpy as np
 import os
 import streamlit.components.v1 as components
+import sys
 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
@@ -23,14 +24,34 @@ st.title("🔬 SHAP-Enhanced METABRIC Explorer")
 st.markdown("Upload METABRIC clinical CSV or use the default file in `data/`")
 
 uploaded = st.file_uploader("Upload CSV", type=['csv'])
+# initialize df to ensure it's always defined
+df = None
 if uploaded:
-    df = pd.read_csv(uploaded)
-else:
-    if os.path.exists("data/metabric_clinical.csv"):
-        df = pd.read_csv("data/metabric_clinical.csv")
-    else:
-        st.warning("No file uploaded and default data/metabric_clinical.csv not found.")
+    try:
+        df = pd.read_csv(uploaded)
+    except Exception:
+        st.error("Failed to read uploaded CSV. Ensure it's a valid CSV file.")
         st.stop()
+else:
+    default_path = os.path.join("data", "metabric_clinical.csv")
+    if os.path.exists(default_path):
+        try:
+            df = pd.read_csv(default_path)
+        except Exception:
+            st.error(f"Failed to read default CSV at {default_path}.")
+            st.stop()
+    else:
+        df = None
+
+# If no dataframe loaded, show error and exit (works with streamlit and plain python)
+if df is None:
+    msg = "No data loaded. Upload a METABRIC CSV or place the default file at data/metabric_clinical.csv"
+    try:
+        st.error(msg)
+        st.stop()
+    except Exception:
+        print(msg)
+        sys.exit(1)
 
 # --- FIX: Ensure required columns exist for the pipeline ---
 for col in ['Overall Survival Status', 'Overall Survival Status_bin']:
@@ -142,6 +163,51 @@ story.append(Spacer(1, 12))
 story.append(Paragraph(f"Prediction Probability: <b>{prob:.3f}</b>", styles["Normal"]))
 story.append(Paragraph("Interpretation: Higher value → higher predicted risk.", styles["Normal"]))
 story.append(Spacer(1, 12))
+
+# ...existing code...
+
+# --- Predict using the pipeline (use pipe, not raw clf on raw df) ---
+# get prediction and probabilities from the full pipeline (preprocessor + classifier)
+predicted = pipe.predict(patient_features)[0]
+probs = pipe.predict_proba(patient_features)[0] if hasattr(pipe, "predict_proba") else None
+
+clf = pipe.named_steps["clf"]
+classes = getattr(clf, "classes_", None)
+
+# Map numeric class to human label (adjust if your labels differ)
+if classes is not None:
+    if set(classes) >= {0, 1}:
+        label_map = {0: "Living", 1: "Deceased"}
+    else:
+        label_map = {c: f"Class {c}" for c in classes}
+else:
+    label_map = {predicted: str(predicted)}
+
+pred_label = label_map.get(predicted, str(predicted))
+
+# probability for "deceased" class if available
+prob_deceased = None
+if probs is not None and classes is not None:
+    try:
+        idx_deceased = list(classes).index(1)
+        prob_deceased = probs[idx_deceased]
+    except Exception:
+        # fallback: probability of predicted class
+        try:
+            prob_deceased = probs[list(classes).index(predicted)]
+        except Exception:
+            prob_deceased = None
+
+st.subheader("Prediction")
+st.write(f"Predicted outcome: **{pred_label}**")
+if prob_deceased is not None:
+    st.write(f"Estimated probability (Deceased / positive class): **{prob_deceased:.3f}**")
+else:
+    st.write("Probability score not available for this estimator.")
+
+st.write("Interpretation: this is a model-based risk estimate for overall survival (not a clinical diagnosis).")
+
+# ...existing code...
 
 # Top contributors
 story.append(Paragraph("Top Feature Contributors", styles["Heading2"]))
