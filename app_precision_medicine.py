@@ -69,23 +69,30 @@ def load_estimators():
     )
 
 
-@st.cache_data
-def load_patient_data():
-    """Load and preprocess METABRIC data."""
-    # Resolve project root robustly (works when this file is at repo root)
-    module_dir = Path(__file__).parent
-    project_root = module_dir if (module_dir / "data").exists() or (module_dir / "models").exists() else module_dir.parent
-
-    data_path = project_root / "data" / "brca_metabric_clinical_data.csv"
-    feature_names_path = project_root / "models" / "selected_feature_names.json"
+def load_patient_data_from_file(uploaded_file):
+    """Load and preprocess patient data from uploaded CSV file."""
+    if uploaded_file is None:
+        return None, None
     
-    df = load_data(str(data_path))
-    df["Overall Survival Status_bin"] = df["Overall Survival Status"].apply(map_survival_status)
-    
-    with open(str(feature_names_path), "r") as f:
-        feature_names = json.load(f)
-    
-    return df, feature_names
+    try:
+        df = pd.read_csv(uploaded_file, low_memory=False)
+        print(f"[load_data] Loaded shape={df.shape} from uploaded file")
+        
+        # Map survival status
+        df["Overall Survival Status_bin"] = df["Overall Survival Status"].apply(map_survival_status)
+        
+        # Load feature names from models directory
+        module_dir = Path(__file__).parent
+        project_root = module_dir if (module_dir / "data").exists() or (module_dir / "models").exists() else module_dir.parent
+        feature_names_path = project_root / "models" / "selected_feature_names.json"
+        
+        with open(str(feature_names_path), "r") as f:
+            feature_names = json.load(f)
+        
+        return df, feature_names
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
+        return None, None
 
 
 def format_treatment_scenario(scenario_dict):
@@ -131,14 +138,30 @@ with st.sidebar:
     st.title("⚙️ Configuration")
     
     st.markdown("---")
+    st.subheader("Data Import")
+    
+    # File upload option
+    uploaded_file = st.file_uploader(
+        "Upload patient data CSV",
+        type=["csv"],
+        help="CSV file must contain patient clinical and demographic data with columns: Patient ID, Age at Diagnosis, ER Status, HER2 Status, Pam50 + Claudin-low subtype, Tumor Stage, Neoplasm Histologic Grade, Tumor Size, Overall Survival Status, and treatment flags (Chemotherapy, Hormone Therapy, Radio Therapy)"
+    )
+    
+    if uploaded_file is not None:
+        if st.button("Load Data"):
+            with st.spinner("Loading patient data..."):
+                st.session_state.df, st.session_state.feature_names = load_patient_data_from_file(uploaded_file)
+                if st.session_state.df is not None:
+                    st.session_state.df = st.session_state.estimator.filter_alive_patients(st.session_state.df) if st.session_state.estimator else st.session_state.df
+                    st.success(f"✅ Data loaded ({len(st.session_state.df)} patients)")
+    
+    st.markdown("---")
     st.subheader("System Initialization")
     
-    if st.button("Initialize System", use_container_width=True):
-        with st.spinner("Loading models and data..."):
+    if st.button("Initialize Models"):
+        with st.spinner("Loading models..."):
             st.session_state.estimator, st.session_state.rag_engine = load_estimators()
-            st.session_state.df, st.session_state.feature_names = load_patient_data()
-            st.session_state.df = st.session_state.estimator.filter_alive_patients(st.session_state.df)
-            st.success(f"✅ System ready ({len(st.session_state.df)} alive patients)")
+            st.success("✅ Models loaded")
     
     st.markdown("---")
     st.subheader("Patient Selection")
@@ -403,8 +426,7 @@ with tab3:
         )
         
         st.bar_chart(
-            data=prob_data.set_index("scenario_id")["survival_probability_benefit"],
-            use_container_width=True
+            data=prob_data.set_index("scenario_id")["survival_probability_benefit"]
         )
     
     with col2:
@@ -415,8 +437,7 @@ with tab3:
         )
         
         st.bar_chart(
-            data=months_data.set_index("scenario_id")["survival_months_benefit"],
-            use_container_width=True
+            data=months_data.set_index("scenario_id")["survival_months_benefit"]
         )
     
     st.markdown("---")
@@ -438,7 +459,7 @@ with tab3:
     
     st.dataframe(
         display_df[["Treatment", "Surv. Prob. Δ", "Surv. Time Δ", "Benefit Category"]],
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
 
@@ -467,7 +488,7 @@ with tab4:
         )
         selected_scenario = ranked[scenario_select].scenario
         
-        if st.button("Compute SHAP Values", use_container_width=True):
+        if st.button("Compute SHAP Values"):
             with st.spinner("Computing feature importance..."):
                 try:
                     shap_results = st.session_state.estimator.explain_scenario_with_shap(

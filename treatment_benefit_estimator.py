@@ -201,16 +201,16 @@ class TreatmentBenefitEstimator:
         """
         counterfactual = patient_features.copy()
         
-        # Map treatment columns to actual feature values
+        # Map treatment columns to actual feature values as learned in training (YES/NO)
         treatment_mapping = {
-            "Chemotherapy": scenario.chemotherapy,
-            "Hormone Therapy": scenario.hormone_therapy,
-            "Radio Therapy": scenario.radiotherapy
+            "Chemotherapy": "YES" if scenario.chemotherapy else "NO",
+            "Hormone Therapy": "YES" if scenario.hormone_therapy else "NO",
+            "Radio Therapy": "YES" if scenario.radiotherapy else "NO"
         }
         
         for col, value in treatment_mapping.items():
             if col in counterfactual.index:
-                counterfactual[col] = 1 if value else 0
+                counterfactual[col] = value
         
         return counterfactual
     
@@ -234,7 +234,7 @@ class TreatmentBenefitEstimator:
         counterfactual = self.apply_treatment_scenario(patient_features, scenario)
         
         # Ensure feature order matches training
-        X = pd.DataFrame([counterfactual[self.feature_names]]).fillna(0)
+        X = pd.DataFrame([counterfactual]).fillna(0)
         
         # Classification: P(alive) = 1 - P(deceased)
         clf_proba = self.classifier_pipeline.predict_proba(X)[0, 1]
@@ -336,11 +336,17 @@ class TreatmentBenefitEstimator:
         Returns:
             Dict with SHAP values and feature importances
         """
-        # Apply counterfactual
-        counterfactual = self.apply_treatment_scenario(patient_features, scenario)
-        X = pd.DataFrame([counterfactual[self.feature_names]]).fillna(0)
-        
         try:
+            # Apply counterfactual
+            counterfactual = self.apply_treatment_scenario(patient_features, scenario)
+            X_raw = pd.DataFrame([counterfactual]).fillna(0)
+            
+            # Transform through the full pipeline except the classifier (preprocessor + selector)
+            X_transformed = self.classifier_pipeline[:-1].transform(X_raw)
+            
+            # Convert to DataFrame
+            X_transformed_df = pd.DataFrame(X_transformed)
+            
             # Import shap lazily to avoid module-level import errors
             try:
                 import shap
@@ -350,22 +356,23 @@ class TreatmentBenefitEstimator:
                     "message": f"SHAP import failed: {e}. Install shap and matplotlib or run in an environment with compatible NumPy." 
                 }
 
-            # Create SHAP explainer for classifier
-            explainer = shap.TreeExplainer(
-                self.classifier_pipeline.named_steps["clf"]
-            )
-            shap_values = explainer.shap_values(X)
+            # Create SHAP explainer for the classifier
+            clf = self.classifier_pipeline.named_steps["clf"]
+            explainer = shap.TreeExplainer(clf)
+            shap_values = explainer.shap_values(X_transformed_df)
             
             # Handle binary classification output
             if isinstance(shap_values, list):
                 shap_pos = shap_values[1]  # Class 1 = deceased
             else:
-                shap_pos = shap_values
+                # For 3D array format (n_samples, n_features, n_classes)
+                shap_pos = shap_values[0, :, 1]  # Class 1 shap values
             
             # Get feature contributions
+            feature_cols = X_transformed_df.columns if X_transformed_df.columns is not None else list(range(X_transformed.shape[1]))
             contributions = pd.Series(
                 shap_pos[0],
-                index=self.feature_names
+                index=feature_cols
             ).sort_values(ascending=False)
             
             return {
